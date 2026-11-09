@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Vortex — rascunho persistente e offline
 // @namespace    otowm.vortex
-// @version      1.2.1
+// @version      1.3.0
 // @homepageURL  https://github.com/otowm/om30-vortex
 // @updateURL    https://raw.githubusercontent.com/otowm/om30-vortex/main/vortex-rascunho-offline.user.js
 // @downloadURL  https://raw.githubusercontent.com/otowm/om30-vortex/main/vortex-rascunho-offline.user.js
-// @description  Guarda o rascunho da Nova Visita fora da aba (sobrevive a fechar o app/aba), permite reiniciar o horário de início ou descartar o rascunho, registra o service worker que o app deixa de registrar (para abrir sem internet) e troca o /login pelo /acesso/<cliente>.
+// @description  Guarda o rascunho da Nova Visita fora da aba (sobrevive a fechar o app/aba), permite reiniciar ou escolher o horário de início ou descartar o rascunho, registra o service worker que o app deixa de registrar (para abrir sem internet) e troca o /login pelo /acesso/<cliente>.
 // @match        https://vortexom30.replit.app/*
 // @run-at       document-start
 // @grant        none
@@ -14,7 +14,7 @@
 (function () {
   'use strict';
 
-  const VERSAO = '1.2.1';
+  const VERSAO = '1.3.0';
 
   // ── 0. /login → /acesso/<cliente> ────────────────────────────────────────
   // Usuários de cliente não conseguem entrar pelo /login (só o admin da
@@ -232,14 +232,16 @@
     location.reload();
   }
 
-  function reiniciarHorario() {
+  // Sem argumento, usa a hora atual; com uma data, usa esse horário de início.
+  function reiniciarHorario(inicio) {
     const d = lerRascunho();
     if (!d) return;
     const agora = new Date();
+    const alvo = inicio || agora;
     Object.assign(d, {
-      inicioMs: agora.getTime(),
-      dataAtualIso: agora.toISOString(),
-      horaInicio: horaDe(agora),
+      inicioMs: alvo.getTime(),
+      dataAtualIso: alvo.toISOString(),
+      horaInicio: horaDe(alvo),
       salvoEm: agora.toISOString(),
     });
     const json = JSON.stringify(d);
@@ -283,8 +285,38 @@
 
     if (d) {
       const dia = d.dataAtualIso ? ` de ${new Date(d.dataAtualIso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}` : '';
-      texto.textContent = `Início atual: ${d.horaInicio || '?'}${dia}. "Começar agora" mantém o que já foi preenchido e troca só o horário. "Descartar" apaga o rascunho inteiro.`;
+      texto.textContent = `Início atual: ${d.horaInicio || '?'}${dia}. "Começar agora" ou "Usar este horário" mantêm o que já foi preenchido e trocam só o horário de hoje. "Descartar" apaga o rascunho inteiro.`;
       botao(`Começar agora (${horaDe(new Date())})`, 'bg-primary text-primary-foreground', () => { fechar(); reiniciarHorario(); });
+
+      // Horário escolhido manualmente (sempre no dia de hoje, nunca no futuro).
+      const linha = document.createElement('div');
+      linha.className = 'flex gap-2';
+      const campoHora = document.createElement('input');
+      campoHora.type = 'time';
+      campoHora.required = true;
+      campoHora.setAttribute('aria-label', 'Novo horário de início');
+      campoHora.className = 'h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm';
+      campoHora.value = d.horaInicio && /^\d{2}:\d{2}$/.test(d.horaInicio) ? d.horaInicio : horaDe(new Date());
+      const usar = document.createElement('button');
+      usar.type = 'button';
+      usar.className = 'inline-flex items-center justify-center rounded-md text-sm font-medium h-10 px-3 border border-input hover:bg-accent';
+      usar.textContent = 'Usar este horário';
+      const erro = document.createElement('p');
+      erro.className = 'text-xs text-destructive';
+      erro.hidden = true;
+      usar.addEventListener('click', () => {
+        const m = /^(\d{2}):(\d{2})$/.exec(campoHora.value);
+        const agora = new Date();
+        const alvo = m ? new Date(agora.getFullYear(), agora.getMonth(), agora.getDate(), +m[1], +m[2]) : null;
+        if (!alvo) { erro.textContent = 'Informe um horário válido.'; erro.hidden = false; return; }
+        if (alvo.getTime() > agora.getTime()) { erro.textContent = 'O início não pode ser depois de agora.'; erro.hidden = false; return; }
+        fechar();
+        reiniciarHorario(alvo);
+      });
+      campoHora.addEventListener('keydown', (e) => { if (e.key === 'Enter') usar.click(); });
+      linha.append(campoHora, usar);
+      botoes.append(linha, erro);
+
       const descartar = botao('Descartar rascunho', 'border border-destructive/50 text-destructive', () => {
         if (descartar.dataset.confirmar) { fechar(); descartarRascunho(); return; }
         descartar.dataset.confirmar = '1';

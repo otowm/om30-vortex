@@ -9,10 +9,10 @@ Instale o [Tampermonkey](https://www.tampermonkey.net/) no navegador e permita a
 
 ### [Vortex — rascunho persistente e offline](https://raw.githubusercontent.com/otowm/om30-vortex/main/vortex-rascunho-offline.user.js)
 
-Versão **1.2.1**.
+Versão **1.3.0**.
 
 - Guarda o rascunho da Nova Visita para sobreviver ao fechamento da aba ou do app.
-- Permite ajustar ou reiniciar o horário de início e descartar o rascunho.
+- Permite reiniciar o horário de início para agora, escolher outro horário (no dia de hoje, até a hora atual) e descartar o rascunho.
 - Registra o service worker do Vortex e prepara os arquivos da página para uso offline.
 - Direciona o login para a página de acesso do cliente.
 - Mostra o estado do rascunho e do offline na nuvenzinha.
