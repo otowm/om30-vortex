@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vortex — rascunho persistente e offline
 // @namespace    otowm.vortex
-// @version      1.4.0
+// @version      1.4.1
 // @homepageURL  https://github.com/otowm/om30-vortex
 // @updateURL    https://raw.githubusercontent.com/otowm/om30-vortex/main/vortex-rascunho-offline.user.js
 // @downloadURL  https://raw.githubusercontent.com/otowm/om30-vortex/main/vortex-rascunho-offline.user.js
@@ -14,7 +14,7 @@
 (function () {
   'use strict';
 
-  const VERSAO = '1.4.0';
+  const VERSAO = '1.4.1';
 
   // ── 0. /login → /acesso/<cliente> ────────────────────────────────────────
   // Usuários de cliente não conseguem entrar pelo /login (só o admin da
@@ -377,8 +377,9 @@
     no.removeAttribute('data-vx-modal');
     document.body.removeAttribute('data-vx-modal-aberto');
     document.removeEventListener('keydown', escModal, true);
-    // Pede ao próprio app para fechar o formulário (o botão costuma alternar).
-    if (clicarBotao && botao?.isConnected && no.isConnected) botao.click();
+    // Fechar pelo fundo ou Esc: por enquanto recarrega a página, porque reabrir
+    // o formulário depois de fechá-lo por aqui não funcionava.
+    if (clicarBotao) location.reload();
   }
   function escModal(e) { if (e.key === 'Escape' && modal) { e.stopPropagation(); fecharModal(true); } }
 
