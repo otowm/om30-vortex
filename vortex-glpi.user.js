@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vortex — lançar visita no GLPI
 // @namespace    otowm.vortex
-// @version      1.8.1
+// @version      1.8.2
 // @homepageURL  https://github.com/otowm/om30-vortex
 // @updateURL    https://raw.githubusercontent.com/otowm/om30-vortex/main/vortex-glpi.user.js
 // @downloadURL  https://raw.githubusercontent.com/otowm/om30-vortex/main/vortex-glpi.user.js
@@ -38,16 +38,20 @@
   // ── 1. Visita → lançamento (sem depender da página) ─────────────────────
   function montarLancamento(visita) {
     const tipo = texto(visita.tipoVisita).replace(/Operação assisitda/gi, 'Operação assistida');
+    const motivo = texto(visita.motivoVisita).replace(/\s+/g, ' ');
     const unidade = texto(visita.unidade);
+    // O campo Título do GLPI aceita 255 caracteres; preserva tipo e unidade.
+    const base = [tipo, unidade].filter(Boolean).join(' - ');
+    const espacoMotivo = Math.max(0, 255 - base.length - (base ? 3 : 0));
+    const motivoTitulo = motivo.length > espacoMotivo
+      ? (espacoMotivo > 1 ? motivo.slice(0, espacoMotivo - 1).trimEnd() + '…' : '') : motivo;
+    const titulo = [tipo, motivoTitulo, unidade].filter(Boolean).join(' - ').slice(0, 255);
     const modulos = [...new Set(Object.values(visita.modulos || {}).flatMap(lista))];
     const linhas = [];
     const linha = (rotulo, valor) => {
       if (texto(valor)) linhas.push(`<p><strong>${escapar(rotulo)}:</strong> ${escapar(valor).replace(/\r\n?|\n/g, '<br>')}</p>`);
     };
-    linha('Motivo', visita.motivoVisita);
     linha('Observações', visita.observacoes);
-    const horario = visita.horaInicio && visita.horaFim ? `das ${visita.horaInicio} às ${visita.horaFim}` : '';
-    linha('Data', [texto(visita.data), horario].filter(Boolean).join(', '));
     linha('Setores', lista(visita.setores).join(', '));
     const sistemas = [...new Set([...lista(visita.sistemas), ...Object.keys(visita.modulos || {})])];
     linha('Sistemas / módulos', sistemas.map((s) => {
@@ -64,23 +68,22 @@
       const conteudo = Array.isArray(valor) && valor.every((v) => typeof v === 'string')
         ? valor.filter(simples).map(texto).filter(Boolean).join(', ') : simples(valor) ? texto(valor) : '';
       const meta = visita.customFieldsMeta?.find((m) => chave === m.id || chave === 'custom_' + m.id);
-      linha(meta?.label || chave, conteudo);
+      const rotulo = meta?.label || chave;
+      // Alguns modelos repetem a data da visita como um campo personalizado.
+      if (normalizar(rotulo) === 'data' && [texto(visita.data), dataIso(visita.data)].includes(conteudo)) continue;
+      if (normalizar(rotulo) === 'motivo' && texto(conteudo).replace(/\s+/g, ' ') === motivo) continue;
+      linha(rotulo, conteudo);
     }
     const id = texto(visita.id);
     if (id) {
       const dia = dataIso(visita.data);
       const parametros = new URLSearchParams(dia ? { dataDe: dia, dataAte: dia, vx_ficha: id } : { vx_ficha: id });
       if (unidade) parametros.set('busca', unidade);
-      const inicio = texto(visita.horaInicio);
-      const fim = texto(visita.horaFim);
-      const intervalo = inicio ? inicio + (fim ? '–' + fim : '') : '';
-      const quando = [dia ? texto(visita.data) : '', intervalo].filter(Boolean).join(' ');
-      // O rótulo permite reconhecer a ficha no Histórico mesmo sem o script.
-      const rotulo = [unidade, quando].filter(Boolean).join(' · ');
-      linhas.push(`<p><strong>Ficha Vortex:</strong> <a href="${escapar('https://vortexom30.replit.app/historico?' + parametros)}">${escapar(rotulo)}</a> <span>(${escapar(id)})</span></p>`);
+      linhas.push(`<p><strong>Ficha Vortex:</strong> <a href="${escapar('https://vortexom30.replit.app/historico?' + parametros)}">${escapar(id)}</a></p>`);
     }
     return {
-      titulo: `${tipo} - ${unidade}`,
+      titulo,
+      tituloAbreviado: titulo !== [tipo, motivo, unidade].filter(Boolean).join(' - '),
       descricaoHtml: linhas.join('\n'),
       unidade, modulos, visitId: texto(visita.id),
       data: texto(visita.data), horaInicio: texto(visita.horaInicio), horaFim: texto(visita.horaFim),
@@ -1290,6 +1293,7 @@
       visitIdAtual = restaurar ? rascunhos()[rascunhoId].visitId : lancamento.visitId;
       let aguardandoRecarga = false;
       const avisos = [];
+      if (lancamento?.tituloAbreviado) avisos.push('Motivo abreviado no título pelo limite de 255 caracteres; consulte o texto completo na ficha Vortex');
       const feitos = [];
       const etapa = async (nome, acao) => {
         try { return await acao(); }
