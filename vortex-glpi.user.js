@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vortex — lançar visita no GLPI
 // @namespace    otowm.vortex
-// @version      1.8.0
+// @version      1.8.1
 // @homepageURL  https://github.com/otowm/om30-vortex
 // @updateURL    https://raw.githubusercontent.com/otowm/om30-vortex/main/vortex-glpi.user.js
 // @downloadURL  https://raw.githubusercontent.com/otowm/om30-vortex/main/vortex-glpi.user.js
@@ -217,20 +217,12 @@
       hash.delete('vx_aguardar');
       history.replaceState(history.state, '', location.pathname + location.search + (hash.size ? '#' + hash : ''));
     }
-    faixa('Buscando ficha no Vortex… Aguarde para preencher o chamado.');
-    const bloqueados = new Set();
-    const bloquear = () => document.querySelectorAll('form#itil-form.new-itil-object').forEach((form) => {
-      if (!form.hasAttribute('inert')) { form.setAttribute('inert', ''); bloqueados.add(form); }
-    });
-    const observador = new MutationObserver(bloquear);
-    observador.observe(document.documentElement, { childList: true, subtree: true });
-    bloquear();
+    mostrarCarregamento('Buscando ficha no Vortex…');
     const inicio = Date.now();
     const chave = 'vxGlpiEntrega:' + entrega;
     const liberar = () => {
       clearInterval(intervalo);
-      observador.disconnect();
-      bloqueados.forEach((form) => form.removeAttribute('inert'));
+      ocultarCarregamento();
     };
     const terminar = () => {
       liberar();
@@ -243,13 +235,14 @@
       if (resultado && idade >= 0 && idade < VALIDADE) {
         terminar();
         GM_deleteValue(chave);
-        if (resultado.erro) { faixa(resultado.erro); return; }
-        if (resultado.chamado) { location.href = URL_GLPI + '?id=' + resultado.chamado; return; }
+        if (resultado.erro) { ocultarCarregamento(); faixa(resultado.erro); return; }
+        if (resultado.chamado) { mostrarCarregamento('Abrindo chamado existente…'); location.href = URL_GLPI + '?id=' + resultado.chamado; return; }
         receberRascunho(resultado.rascunho);
-        faixa('Ficha recebida. Preparando o chamado…');
+        mostrarCarregamento('Ficha recebida. Preparando o chamado…');
         iniciarGlpi();
       } else if (Date.now() - inicio >= 60000) {
         terminar();
+        ocultarCarregamento();
         faixa('O Vortex não respondeu a tempo. Volte à ficha e clique em Lançar no GLPI novamente.');
       }
     };
@@ -442,6 +435,52 @@
     fechar.onclick = () => el.remove();
     el.append(conteudo, fechar);
     document.body.appendChild(el);
+  }
+
+  let carregamentoGlpi;
+  function mostrarCarregamento(mensagem) {
+    if (carregamentoGlpi) { carregamentoGlpi.mensagem.textContent = mensagem; return; }
+    const focoAnterior = document.activeElement;
+    const overflowAnterior = document.body.style.overflow;
+    const ocupadoAnterior = document.body.getAttribute('aria-busy');
+    const camada = document.createElement('div');
+    camada.id = 'vx-glpi-carregando';
+    camada.setAttribute('role', 'dialog');
+    camada.setAttribute('aria-modal', 'true');
+    camada.setAttribute('aria-labelledby', 'vx-glpi-carregando-titulo');
+    camada.setAttribute('aria-describedby', 'vx-glpi-carregando-mensagem');
+    camada.tabIndex = -1;
+    camada.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;padding:24px;background:rgba(0,0,0,.42);box-sizing:border-box';
+    camada.innerHTML = '<style>@keyframes vx-glpi-girar{to{transform:rotate(360deg)}}#vx-glpi-carregando .vx-glpi-spinner{width:32px;height:32px;box-sizing:border-box;border:3px solid var(--tblr-border-color,#dce1e7);border-top-color:var(--tblr-primary,#206bc4);border-radius:50%;animation:vx-glpi-girar .8s linear infinite;margin:0 auto 20px}@media(prefers-reduced-motion:reduce){#vx-glpi-carregando .vx-glpi-spinner{animation:none}}</style><div style="width:100%;max-width:360px;padding:32px 24px;box-sizing:border-box;border-radius:8px;background:var(--tblr-bg-surface,var(--tblr-body-bg,#fff));color:var(--tblr-body-color,#182433);box-shadow:0 12px 32px rgba(0,0,0,.16);text-align:center;font-family:inherit"><div class="vx-glpi-spinner" aria-hidden="true"></div><p id="vx-glpi-carregando-titulo" style="font-size:18px;font-weight:600;line-height:1.35;margin:0 0 8px">Preparando chamado</p><p id="vx-glpi-carregando-mensagem" role="status" aria-live="polite" aria-atomic="true" style="font-size:14px;line-height:1.5;margin:0"></p></div>';
+    const mensagemEl = camada.querySelector('#vx-glpi-carregando-mensagem');
+    mensagemEl.textContent = mensagem;
+    const bloqueados = new Set();
+    const bloquear = () => [...document.body.children].forEach((el) => {
+      if (el !== camada && !el.hasAttribute('inert')) { el.setAttribute('inert', ''); bloqueados.add(el); }
+    });
+    document.body.appendChild(camada);
+    document.body.style.overflow = 'hidden';
+    document.body.setAttribute('aria-busy', 'true');
+    bloquear();
+    const observador = new MutationObserver(bloquear);
+    observador.observe(document.body, { childList: true });
+    camada.focus();
+    window.addEventListener('pagehide', ocultarCarregamento, { once: true });
+    carregamentoGlpi = { mensagem: mensagemEl, fechar() {
+      window.removeEventListener('pagehide', ocultarCarregamento);
+      observador.disconnect();
+      bloqueados.forEach((el) => el.removeAttribute('inert'));
+      camada.remove();
+      document.body.style.overflow = overflowAnterior;
+      if (ocupadoAnterior === null) document.body.removeAttribute('aria-busy');
+      else document.body.setAttribute('aria-busy', ocupadoAnterior);
+      if (focoAnterior?.isConnected) focoAnterior.focus();
+    } };
+  }
+
+  function ocultarCarregamento() {
+    carregamentoGlpi?.fechar();
+    carregamentoGlpi = null;
   }
 
   // ── 2. Vortex: identifica a visita antes do React abrir o detalhe ─────────
@@ -1145,8 +1184,7 @@
     sincronizarGlpi();
     window.addEventListener('focus', () => sincronizarGlpi());
     setInterval(() => sincronizarGlpi(), INTERVALO_SYNC);
-    if (location.pathname !== '/front/ticket.form.php') return;
-    if (numero && numero !== '0') return;
+    if (location.pathname !== '/front/ticket.form.php' || (numero && numero !== '0')) { ocultarCarregamento(); return; }
     let preenchendo = false;
     let temporizador;
     let visitIdAtual;
@@ -1245,6 +1283,7 @@
       if ((!restaurar && !carregarVisita) || preenchendo || prontos.has(form)) return;
       const lancamento = pendente?.lancamento;
       preenchendo = true;
+      mostrarCarregamento(restaurar ? 'Restaurando seu rascunho…' : 'Preenchendo os dados da visita…');
       cancelarAutossalvar();
       const rascunhoId = restaurar ? retomar.rascunhoId : pendente.rascunhoId;
       if (rascunhoId) sessionStorage.setItem(CHAVE_ATUAL, rascunhoId);
@@ -1366,7 +1405,7 @@
           // Mantém o autossalvar suspenso até a próxima tentativa/template.
           preenchendo = true;
           setTimeout(() => { preenchendo = false; preencher(); }, 500);
-        } else if (prontos.has(form)) { vincular(form); agendar(form); }
+        } else if (prontos.has(form)) { ocultarCarregamento(); vincular(form); agendar(form); }
       }
     }
     observar(preencher);
