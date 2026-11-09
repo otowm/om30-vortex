@@ -5,9 +5,6 @@ Userscripts para facilitar o registro de visitas no Vortex e o lançamento de ch
 ## Pré-requisitos
 
 Instale o [Tampermonkey](https://www.tampermonkey.net/) no navegador e permita a execução de userscripts nas configurações da extensão e do navegador.
-
-Os scripts funcionam em [vortexom30.replit.app](https://vortexom30.replit.app/). A integração GLPI também funciona em [suporte.om30.cloud](https://suporte.om30.cloud/). É necessário ter acesso aos sistemas.
-
 ## Scripts disponíveis
 
 ### [Vortex — rascunho persistente e offline](https://raw.githubusercontent.com/otowm/om30-vortex/main/vortex-rascunho-offline.user.js)
