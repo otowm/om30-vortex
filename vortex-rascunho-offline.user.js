@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Vortex — rascunho persistente e offline
 // @namespace    otowm.vortex
-// @version      1.3.0
+// @version      1.4.0
 // @homepageURL  https://github.com/otowm/om30-vortex
 // @updateURL    https://raw.githubusercontent.com/otowm/om30-vortex/main/vortex-rascunho-offline.user.js
 // @downloadURL  https://raw.githubusercontent.com/otowm/om30-vortex/main/vortex-rascunho-offline.user.js
-// @description  Guarda o rascunho da Nova Visita fora da aba (sobrevive a fechar o app/aba), permite reiniciar ou escolher o horário de início ou descartar o rascunho, registra o service worker que o app deixa de registrar (para abrir sem internet) e troca o /login pelo /acesso/<cliente>.
+// @description  Guarda o rascunho da Nova Visita fora da aba (sobrevive a fechar o app/aba), permite reiniciar ou escolher o horário de início ou descartar o rascunho, registra o service worker que o app deixa de registrar (para abrir sem internet) troca o /login pelo /acesso/<cliente> e abre o "Novo Agendamento" em modal.
 // @match        https://vortexom30.replit.app/*
 // @run-at       document-start
 // @grant        none
@@ -14,7 +14,7 @@
 (function () {
   'use strict';
 
-  const VERSAO = '1.3.0';
+  const VERSAO = '1.4.0';
 
   // ── 0. /login → /acesso/<cliente> ────────────────────────────────────────
   // Usuários de cliente não conseguem entrar pelo /login (só o admin da
@@ -349,6 +349,96 @@
       quadro.appendChild(b);
     }
   }
+
+  // ── 5. "Novo Agendamento" em modal ────────────────────────────────────────
+  // Em /agendar, o botão "Novo Agendamento" abre o formulário no fim da página.
+  // Sem mover o nó (o React continua dono dele), o bloco que aparece com campos
+  // de formulário é posicionado como um modal sobre um fundo escuro.
+  const ESTILO_MODAL = `
+    [data-vx-modal="1"] {
+      position: fixed !important; z-index: 2147483645 !important;
+      top: 50% !important; left: 50% !important; transform: translate(-50%, -50%) !important;
+      width: min(640px, calc(100vw - 32px)) !important; max-height: calc(100vh - 32px) !important;
+      overflow: auto !important; margin: 0 !important;
+      background: hsl(var(--background, 0 0% 100%)) !important; color: hsl(var(--foreground, 0 0% 0%));
+      border-radius: 12px !important; box-shadow: 0 20px 50px rgba(0,0,0,.35) !important; padding: 16px !important;
+    }
+    [data-vx-modal-fundo] { position: fixed; inset: 0; z-index: 2147483644; background: rgba(0,0,0,.6); }
+    body[data-vx-modal-aberto] { overflow: hidden !important; }`;
+
+  let modal = null; // { no, fundo, botao, vigia }
+
+  function fecharModal(clicarBotao) {
+    if (!modal) return;
+    const { no, fundo, botao, vigia } = modal;
+    modal = null;
+    clearInterval(vigia);
+    fundo.remove();
+    no.removeAttribute('data-vx-modal');
+    document.body.removeAttribute('data-vx-modal-aberto');
+    document.removeEventListener('keydown', escModal, true);
+    // Pede ao próprio app para fechar o formulário (o botão costuma alternar).
+    if (clicarBotao && botao?.isConnected && no.isConnected) botao.click();
+  }
+  function escModal(e) { if (e.key === 'Escape' && modal) { e.stopPropagation(); fecharModal(true); } }
+
+  function abrirModal(no, botao) {
+    fecharModal(false);
+    if (!document.getElementById('vx-modal-estilo')) {
+      const st = document.createElement('style');
+      st.id = 'vx-modal-estilo';
+      st.textContent = ESTILO_MODAL;
+      document.head.appendChild(st);
+    }
+    const fundo = document.createElement('div');
+    fundo.setAttribute('data-vx-modal-fundo', '');
+    fundo.addEventListener('click', () => fecharModal(true));
+    document.body.appendChild(fundo);
+    no.setAttribute('data-vx-modal', '1');
+    document.body.setAttribute('data-vx-modal-aberto', '');
+    document.addEventListener('keydown', escModal, true);
+    // Formulário salvo/cancelado pelo app: o bloco some e o fundo sai junto.
+    const vigia = setInterval(() => {
+      if (!modal) return;
+      if (!no.isConnected || getComputedStyle(no).display === 'none') fecharModal(false);
+    }, 300);
+    modal = { no, fundo, botao, vigia };
+    no.querySelector('input:not([type=hidden]), select, textarea, button[role=combobox]')?.focus?.({ preventScroll: true });
+  }
+
+  const temCampos = (el) => el.nodeType === 1 && (el.matches('form, input, select, textarea') || el.querySelector('form, input:not([type=hidden]), select, textarea, [role=combobox]'));
+
+  // Sobe a partir do nó novo enquanto o pai não for um contêiner que já existia
+  // com outros conteúdos (ex.: a lista de agendamentos).
+  function blocoDe(el, antes) {
+    let atual = el;
+    while (atual.parentElement && atual.parentElement !== document.body && !antes.has(atual.parentElement) && atual.parentElement.tagName !== 'MAIN') {
+      atual = atual.parentElement;
+    }
+    return atual;
+  }
+
+  document.addEventListener('click', (e) => {
+    if (!location.pathname.startsWith('/agendar')) return;
+    const botao = e.target.closest?.('button, a, [role=button]');
+    if (!botao || modal) return;
+    if (!/novo agendamento/i.test(botao.textContent || '')) return;
+    const antes = new Set(document.querySelectorAll('body *'));
+    let achou = false;
+    const obs = new MutationObserver((mudancas) => {
+      for (const m of mudancas) {
+        for (const n of m.addedNodes) {
+          if (achou || n.nodeType !== 1 || !temCampos(n)) continue;
+          achou = true;
+          obs.disconnect();
+          setTimeout(() => abrirModal(blocoDe(n, antes), botao), 0);
+          return;
+        }
+      }
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    setTimeout(() => obs.disconnect(), 3000);
+  }, true);
 
   let agendado = false;
   new MutationObserver(() => {
