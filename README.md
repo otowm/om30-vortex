@@ -29,7 +29,7 @@ Versão **1.7.3**.
 - Prepara um chamado com os dados da visita, incluindo título, descrição, data, duração, localização, categoria e atores.
 - Oferece o lançamento ao finalizar a visita e no detalhe de uma ficha.
 - Salva rascunhos do GLPI e permite continuar o preenchimento depois.
-- Mostra pendências e vínculos com chamados em Minhas Visitas e na nuvenzinha.
+- Mostra pendências e vínculos com chamados em Minhas Visitas.
 - Inclui um link para a ficha no Histórico, com filtro de data e busca pelo nome da unidade. Com o script ativo no Vortex, tenta abrir a ficha correspondente.
 
 Revise os dados e clique em **Adicionar** no GLPI. O script não envia o chamado automaticamente.
