@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Vortex — lançar visita no GLPI
 // @namespace    otowm.vortex
-// @version      1.7.3
+// @version      1.8.0
 // @homepageURL  https://github.com/otowm/om30-vortex
 // @updateURL    https://raw.githubusercontent.com/otowm/om30-vortex/main/vortex-glpi.user.js
 // @downloadURL  https://raw.githubusercontent.com/otowm/om30-vortex/main/vortex-glpi.user.js
@@ -187,21 +187,76 @@
     GM_deleteValue(chave);
   }
 
-  // Vortex → nova guia do GLPI: o sessionStorage não atravessa guias e o GM
-  // pode ainda não ter chegado, então o rascunho também vai no #hash da URL.
+  // Compatibilidade com links de rascunho gerados antes da abertura imediata.
   function receberDaUrl() {
     const achado = /[#&]vx=([^&]*)/.exec(location.hash);
     if (!achado) return;
     try {
       const { rascunho } = JSON.parse(decodeURIComponent(achado[1]));
-      const dados = rascunhos();
-      const guardado = dados[rascunho.id];
-      const maisNovo = guardado && Number(guardado.atualizadoEm) >= Number(rascunho.atualizadoEm) ? guardado : rascunho;
-      if (maisNovo === rascunho) guardarRascunhos({ ...dados, [rascunho.id]: rascunho });
-      sessionStorage.setItem(CHAVE_ATUAL, maisNovo.id);
-      prepararRetomada(maisNovo);
+      receberRascunho(rascunho);
     } catch (erro) { registrar('rascunho na URL', erro); }
     history.replaceState(history.state, '', location.pathname + location.search);
+  }
+
+  function receberRascunho(rascunho) {
+    const dados = rascunhos();
+    const guardado = dados[rascunho.id];
+    const maisNovo = guardado && Number(guardado.atualizadoEm) >= Number(rascunho.atualizadoEm) ? guardado : rascunho;
+    if (maisNovo === rascunho) guardarRascunhos({ ...dados, [rascunho.id]: rascunho });
+    sessionStorage.setItem(CHAVE_ATUAL, maisNovo.id);
+    prepararRetomada(maisNovo);
+  }
+
+  // Cada clique tem sua própria entrega GM; duas abas não consomem a mesma ficha.
+  function aguardarLancamento() {
+    const hash = new URLSearchParams(location.hash.slice(1));
+    const entrega = hash.get('vx_aguardar') || sessionStorage.getItem('vxGlpiAguardando');
+    if (!entrega) return false;
+    sessionStorage.setItem('vxGlpiAguardando', entrega);
+    if (hash.has('vx_aguardar')) {
+      hash.delete('vx_aguardar');
+      history.replaceState(history.state, '', location.pathname + location.search + (hash.size ? '#' + hash : ''));
+    }
+    faixa('Buscando ficha no Vortex… Aguarde para preencher o chamado.');
+    const bloqueados = new Set();
+    const bloquear = () => document.querySelectorAll('form#itil-form.new-itil-object').forEach((form) => {
+      if (!form.hasAttribute('inert')) { form.setAttribute('inert', ''); bloqueados.add(form); }
+    });
+    const observador = new MutationObserver(bloquear);
+    observador.observe(document.documentElement, { childList: true, subtree: true });
+    bloquear();
+    const inicio = Date.now();
+    const chave = 'vxGlpiEntrega:' + entrega;
+    const liberar = () => {
+      clearInterval(intervalo);
+      observador.disconnect();
+      bloqueados.forEach((form) => form.removeAttribute('inert'));
+    };
+    const terminar = () => {
+      liberar();
+      window.removeEventListener('pagehide', liberar);
+      sessionStorage.removeItem('vxGlpiAguardando');
+    };
+    const consultar = () => {
+      const resultado = GM_getValue(chave, null);
+      const idade = Date.now() - Number(resultado?.em);
+      if (resultado && idade >= 0 && idade < VALIDADE) {
+        terminar();
+        GM_deleteValue(chave);
+        if (resultado.erro) { faixa(resultado.erro); return; }
+        if (resultado.chamado) { location.href = URL_GLPI + '?id=' + resultado.chamado; return; }
+        receberRascunho(resultado.rascunho);
+        faixa('Ficha recebida. Preparando o chamado…');
+        iniciarGlpi();
+      } else if (Date.now() - inicio >= 60000) {
+        terminar();
+        faixa('O Vortex não respondeu a tempo. Volte à ficha e clique em Lançar no GLPI novamente.');
+      }
+    };
+    const intervalo = setInterval(consultar, 250);
+    window.addEventListener('pagehide', liberar, { once: true });
+    consultar();
+    return true;
   }
 
   function rascunhoDaVisita(id) {
@@ -217,11 +272,6 @@
     apagarEstado('vxGlpiRetomar');
     gravarEstado('vxGlpiPendente', { lancamento: rascunho.lancamento, criadoEm: Date.now(), rascunhoId: rascunho.id });
     return `${URL_GLPI}?entities_id=${ENTIDADE}&type=${TIPO}&status=${STATUS}&itilcategories_id=${CATEGORIA_PADRAO}`;
-  }
-
-  // Para abrir em outra guia: leva o rascunho junto (ver receberDaUrl).
-  function urlComRascunho(rascunho) {
-    return prepararRetomada(rascunho) + '#vx=' + encodeURIComponent(JSON.stringify({ rascunho }));
   }
 
   // "Rascunhos" no menu Assistência, logo abaixo de "Criar chamado", abrindo
@@ -395,29 +445,39 @@
   }
 
   // ── 2. Vortex: identifica a visita antes do React abrir o detalhe ─────────
-  // Busca a visita no servidor (garante que já sincronizou) e abre o GLPI;
-  // se ela já foi lançada, abre o chamado existente.
+  // Abre o GLPI no clique e entrega os dados após confirmar a visita no servidor.
   async function lancarVisita(id, conferir) {
+    const entrega = pagina.crypto.randomUUID();
+    const chave = 'vxGlpiEntrega:' + entrega;
+    const rascunhoAtual = rascunhoDaVisita(id);
+    const entidade = rascunhoAtual?.campos?.entities_id?.value || ENTIDADE;
+    const url = `${URL_GLPI}?entities_id=${encodeURIComponent(entidade)}&type=${TIPO}&status=${STATUS}&itilcategories_id=${CATEGORIA_PADRAO}#vx_aguardar=${entrega}`;
+    const aba = window.open(url, '_blank');
+    if (!aba) { faixa('Permita abrir novas guias para lançar a visita no GLPI.'); return; }
+    const entregar = (resultado) => GM_setValue(chave, { ...resultado, em: Date.now() });
     try {
       const resposta = await fetch('/api/visitas/' + encodeURIComponent(id), { credentials: 'same-origin' });
       if (!resposta.ok) throw new Error('HTTP ' + resposta.status);
       const visita = await resposta.json();
       if (!visita || visita.id !== id || !texto(visita.unidade)) throw new Error('Visita sem dados sincronizados');
       if (conferir && !conferir(visita)) {
-        faixa('Não consegui confirmar qual visita está aberta. Feche e abra a visita pela lista.');
+        const erro = 'Não consegui confirmar qual visita está aberta. Feche e abra a visita pela lista.';
+        entregar({ erro });
+        faixa(erro);
         return;
       }
       const chamado = GM_getValue('vxGlpiLancados', {})[id];
-      if (/^\d+$/.test(String(chamado))) { window.open(URL_GLPI + '?id=' + chamado, '_blank'); return; }
+      if (/^\d+$/.test(String(chamado))) { entregar({ chamado }); return; }
       let rascunho = rascunhoDaVisita(id);
       if (!rascunho) {
         rascunho = novoRascunho({ origem: 'vortex', visitId: texto(id), lancamento: montarLancamento(visita) });
         guardarRascunhos({ ...rascunhos(), [rascunho.id]: rascunho });
       }
-      const aba = window.open(urlComRascunho(rascunho), '_blank');
-      if (!aba) faixa('Permita abrir novas guias para lançar a visita no GLPI. Os dados estão guardados.');
+      // A aba de destino prepara a retomada; não publica ordens globais antes dela receber a entrega.
+      entregar({ rascunho });
     } catch (erro) {
       registrar('buscar visita', erro);
+      entregar({ erro: 'Não foi possível buscar a ficha no Vortex. Confira a conexão e se a visita foi sincronizada.' });
       faixa('Visita ainda não sincronizada ou sem internet');
     }
   }
@@ -1058,6 +1118,7 @@
 
   // ── 4. Preenche uma vez; recargas de template retomam do armazenamento ───
   function iniciarGlpi() {
+    if (aguardarLancamento()) return;
     receberDaUrl();
     const enviando = GM_getValue('vxGlpiEnviando', null);
     const numero = new URL(location.href).searchParams.get('id');

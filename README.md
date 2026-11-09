@@ -21,10 +21,11 @@ Abra o sistema com internet antes de usar o modo offline, para preparar o cache.
 
 ### [Vortex — lançar visita no GLPI](https://raw.githubusercontent.com/otowm/om30-vortex/main/vortex-glpi.user.js)
 
-Versão **1.7.3**.
+Versão **1.8.0**.
 
 - Prepara um chamado com os dados da visita, incluindo título, descrição, data, duração, localização, categoria e atores.
 - Oferece o lançamento ao finalizar a visita e no detalhe de uma ficha.
+- Abre o GLPI imediatamente, enquanto consulta a ficha no Vortex. O GLPI mostra o andamento e continua o preenchimento quando os dados chegam.
 - Salva rascunhos do GLPI e permite continuar o preenchimento depois.
 - Mostra pendências e vínculos com chamados em Minhas Visitas.
 - Inclui um link para a ficha no Histórico, com filtro de data e busca pelo nome da unidade. Com o script ativo no Vortex, tenta abrir a ficha correspondente.
